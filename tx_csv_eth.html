@@ -1,0 +1,150 @@
+<html>
+  <head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bluebird/3.5.1/bluebird.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bignumber.js/6.0.0/bignumber.min.js"></script>
+    <script type="text/javascript">
+      const go = () => {
+        (async () => {
+
+          const WEI_PER_ETHER = BigNumber(1000000000000000000)
+
+          const addresses = document
+            .getElementById("textareaID")
+            .value
+            .split('\n')
+            .filter(x => x)
+
+          const display = (txt) => document.getElementById("csv").textContent = txt
+          display("thinking about it...")
+
+          function toFixed(x) {
+            return x.toString()
+          }
+
+          const parseIntZeroDefault = (int) => parseInt(int) ? BigNumber(int) : BigNumber(0)
+
+          const raise = (msg) => {
+            display(msg)
+            throw new Error(msg)
+          }
+
+          const apiKey = (() => {
+            if (window.location.hash) {
+              return window.location.hash.slice(1)
+            } else {
+              const defaultValue = "0000000000000000000000000000000000"
+              const apiKey = prompt("Please enter your Etherscan Api Key:", defaultValue)
+              if (apiKey === null || apiKey === "" || apiKey === defaultValue) {
+                  raise("Please enter an Api Key")
+              } else {
+                  window.location.hash = apiKey
+                  return apiKey
+              }
+            }
+          })()
+
+          const doApiAction = async (action, address) => {
+            const url = `http://api.etherscan.io/api?module=account&action=${action}&address=${address}&startblock=0&endblock=99999999&sort=asc&apikey=${apiKey}`
+            const response = await fetch(url)
+            await Promise.delay(0.25)
+            const json = await response.json()
+            if (json.message === "NOTOK") {
+              raise(`Got "${json.result}" from etherscan while doing "${action}" for address "${address}"`)
+            } else {
+              return json.result
+            }
+          }
+
+          const transactions = await Promise.reduce(
+            addresses,
+            async (accumulator, address) => accumulator
+              .concat(await doApiAction("txlist", address))
+              .concat(await doApiAction("txlistinternal", address))
+            ,
+            [],
+          )
+
+          console.log(transactions)
+
+          transactions.sort((a, b) => parseInt(a.timeStamp) - parseInt(b.timeStamp))
+          transactions.forEach(transaction => transaction.value = parseInt(transaction.value) ? transaction.value : '')
+
+          let balance = BigNumber(0)
+          transactions.forEach((transaction) => {
+            addresses
+              .map((address) => address.toLowerCase())
+              .forEach((address) => {
+                if (transaction.from === address) {
+                  const gasCost = parseIntZeroDefault(transaction.gasUsed).multipliedBy(parseIntZeroDefault(transaction.gasPrice))
+                  const value = parseInt(transaction.isError) ? BigNumber(0) : parseIntZeroDefault(transaction.value)
+                  balance = balance.minus(value.plus(gasCost))
+                }
+                if (transaction.to === address) {
+                  balance = balance.plus(parseIntZeroDefault(transaction.value))
+                }
+              })
+            transaction.balance = toFixed(balance.dividedBy(WEI_PER_ETHER))
+            transaction.value = toFixed(parseIntZeroDefault(transaction.value).dividedBy(WEI_PER_ETHER))
+            // *** CAUTION *** These lines cannot be freely reordered
+            transaction.gasCost = toFixed(parseIntZeroDefault(transaction.gasUsed).multipliedBy(parseIntZeroDefault(transaction.gasPrice)).dividedBy(WEI_PER_ETHER))
+            transaction.gasPrice = toFixed(parseIntZeroDefault(transaction.gasPrice).dividedBy(WEI_PER_ETHER))
+            transaction.time = (new Date(transaction.timeStamp * 1000)).toISOString()
+          })
+
+          const fields = [
+            "balance",
+            "blockHash",
+            "blockNumber",
+            "cumulativeGasUsed",
+            "from",
+            "gasPrice",
+            "gasCost",
+            "nonce",
+            "time",
+            "to",
+            "transactionIndex",
+            "txreceipt_status",
+            "value",
+            "contractAddress",
+            "errCode",
+            "gas",
+            "gasUsed",
+            "hash",
+            "isError",
+            "timeStamp",
+            "to",
+            "traceId",
+            "type",
+          ]
+          let csvContent = "";
+          const printRow = (row) => {
+            csvContent += row.join(",") + "\r\n";
+          }
+          printRow(fields)
+          transactions.forEach((transaction) => {
+            printRow(fields.map(field => transaction[field]))
+          })
+          display(csvContent)
+          var blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          var link = document.createElement("a");
+          var url = URL.createObjectURL(blob);
+          link.setAttribute("href", url);
+          link.setAttribute("download", "transactions.csv");
+          link.style.visibility = 'hidden';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        })()
+          .then((val) => console.log(val || "falsy success"))
+          .catch((val) => console.log(val || "falsy failure"))
+      }
+   </script>
+ </head>
+ <body>
+   <div id="csv">
+     <textarea id="textareaID" cols="42" rows="40">one address on each line, pls</textarea>
+     It will take 0.5 seconds for each address you enter
+     <button onclick="go()">Go</button>
+   </div>
+ </body>
+</html>
